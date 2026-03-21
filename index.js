@@ -72,6 +72,10 @@ function getRoleToPing(auraName, chance) {
 }
 
 // ── Payload parser ─────────────────────────────────────────────────────────────
+// Embed description format:
+//   "agony(@Bobloqgc) HAS FOUND Sailor : Admiral, CHANCE OF 1 IN 540,000,000"
+//    ^^^^^ display name
+//          ^^^^^^^^^^ real Roblox username (what we need)
 
 function parseWebhookPayload(data) {
     if (!data.embeds || data.embeds.length === 0) return null;
@@ -80,13 +84,15 @@ function parseWebhookPayload(data) {
     const text  = embed.description || '';
     if (!text) return null;
 
-    const pattern = /^(.+?)(?:\(@[^)]+\))?\s+HAS FOUND\s+(.+?),\s+CHANCE OF\s+(1\s+IN\s+[\d,]+)/i;
+    // Extract the real Roblox username from inside (@Username)
+    // and the aura name + chance
+    const pattern = /.+?\(@([^)]+)\)\s+HAS FOUND\s+(.+?),\s+CHANCE OF\s+(1\s+IN\s+[\d,]+)/i;
     const match = text.match(pattern);
     if (!match) return null;
 
-    const robloxUsername = match[1].trim();
-    const auraName       = match[2].trim();
-    const chanceStr      = match[3].trim();
+    const robloxUsername = match[1].trim(); // e.g. "Bobloqgc"
+    const auraName       = match[2].trim(); // e.g. "Sailor : Admiral"
+    const chanceStr      = match[3].trim(); // e.g. "1 IN 540,000,000"
     const chance         = parseChance(chanceStr);
 
     if (!chance) return null;
@@ -121,25 +127,23 @@ async function handleFind(data) {
     const src = data.embeds[0];
     const embed = new EmbedBuilder();
 
-    if (src.description)            embed.setDescription(src.description);
-    if (src.color)                  embed.setColor(src.color);
-    if (src.title)                  embed.setTitle(src.title);
-    if (src.url)                    embed.setURL(src.url);
-    if (src.author)                 embed.setAuthor({ name: src.author.name, iconURL: src.author.icon_url, url: src.author.url });
-    if (src.thumbnail?.url)         embed.setThumbnail(src.thumbnail.url);
-    if (src.image?.url)             embed.setImage(src.image.url);
-    if (src.footer)                 embed.setFooter({ text: src.footer.text, iconURL: src.footer.icon_url });
-    if (src.timestamp)              embed.setTimestamp(new Date(src.timestamp));
-    if (src.fields?.length > 0)     embed.addFields(src.fields);
+    if (src.description)        embed.setDescription(src.description);
+    if (src.color)              embed.setColor(src.color);
+    if (src.title)              embed.setTitle(src.title);
+    if (src.url)                embed.setURL(src.url);
+    if (src.author)             embed.setAuthor({ name: src.author.name, iconURL: src.author.icon_url, url: src.author.url });
+    if (src.thumbnail?.url)     embed.setThumbnail(src.thumbnail.url);
+    if (src.image?.url)         embed.setImage(src.image.url);
+    if (src.footer)             embed.setFooter({ text: src.footer.text, iconURL: src.footer.icon_url });
+    if (src.timestamp)          embed.setTimestamp(new Date(src.timestamp));
+    if (src.fields?.length > 0) embed.addFields(src.fields);
 
     try {
         const outputChannel = await discordClient.channels.fetch(outputChannelId);
-
         await outputChannel.send({
             content: `<@&${roleId}> <@${discordUserId}>`,
             embeds: [embed],
         });
-
         console.log(`📨  Sent ping — ${robloxUsername} | ${auraName}`);
     } catch (err) {
         console.error(`❌  Failed to send ping: ${err.message}`);
@@ -197,7 +201,7 @@ const connect = () => {
     });
 
     ws.on('open', () => {
-        console.log(`ID: ${discordClient.user?.id ?? 'pending'} | WS client connected: ${gatewayURL}`);
+        console.log(`WS client connected: ${gatewayURL}`);
         reconnectInterval = 31_000;
     });
 
@@ -207,13 +211,12 @@ const connect = () => {
 
             switch (rawData.action) {
                 case 'enabled':
-                    console.log('Sol\'s Stat Tracker — Enabled');
+                    console.log("Sol's Stat Tracker — Enabled");
                     break;
                 case 'disabled':
-                    console.log('Sol\'s Stat Tracker — Disabled');
+                    console.log("Sol's Stat Tracker — Disabled");
                     break;
                 case 'executeWebhook': {
-                    // Only check if a linked friend got the aura — no webhook forwarding
                     handleFind(rawData.data);
                     break;
                 }
