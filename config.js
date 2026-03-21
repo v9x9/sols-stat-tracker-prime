@@ -31,7 +31,7 @@ const config = {
     // ── YOUR PING BOT SETTINGS ────────────────────────────────────────────────
 
     // Your Discord bot token (from discord.com/developers)
-    "botToken": "MTQ4NDkzMDEyMTk1Njg1NTk2MA.GFHoHO.OobFP2XfK_61Rvy8HKNDIJ6CUyf8qi-gF5IRVE",
+    "botToken": "MTQ4NDkzMDEyMTk1Njg1NTk2MA.Gtpj9-.gxq15sAskZlx1KYC0MvE0hnFxcKo2_pmBSefls",
 
     // Your bot's Application ID (from discord.com/developers → General Information)
     "clientId": "1484930121956855960",
