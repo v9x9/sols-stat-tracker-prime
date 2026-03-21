@@ -1,21 +1,18 @@
 // Sol's Stat Tracker Ping Bot
 // Built on top of the official Sol's Stat Tracker Webhook Client by @mongoo.se
-// Intercepts executeWebhook payloads, checks linked users, and pings roles in your private server.
 
 const WebSocket = require('ws');
-const { Client, GatewayIntentBits, Events, WebhookClient, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Events, EmbedBuilder } = require('discord.js');
 const fs   = require('fs');
 const path = require('path');
 
 const {
-    token, webhookURL,
-    overrideUsername, overrideAvatarURL, colors, emojis,
+    token, colors, emojis,
     gatewayURL, maxReconnectInterval, reconnectOnDuplicateConnection, verboseLogging,
-    // Your additions:
     botToken, privateGuildId, outputChannelId, roles: roleIds
 } = require('./config');
 
-// ── Discord bot client (for pinging roles + users in your private server) ─────
+// ── Discord bot client ─────────────────────────────────────────────────────────
 
 const discordClient = new Client({
     intents: [GatewayIntentBits.Guilds],
@@ -27,16 +24,7 @@ discordClient.once(Events.ClientReady, () => {
     console.log(`✅  Discord bot logged in as ${discordClient.user.tag}`);
 });
 
-// ── Webhook client (passes through all finds to your webhook as normal) ────────
-
-const webhookClient = new WebhookClient({ url: webhookURL });
-
-webhookClient.on(Events.Error, (error) => {
-    console.error(`ID: ${webhookClient.id} | Webhook client error: ${error.message}`);
-});
-
 // ── Links store ────────────────────────────────────────────────────────────────
-// links.json → { "robloxusername_lowercase": "DiscordUserID", ... }
 
 const LINKS_FILE = path.join(__dirname, 'links.json');
 
@@ -83,19 +71,7 @@ function getRoleToPing(auraName, chance) {
     return null;
 }
 
-function getTierLabel(auraName, chance) {
-    const lower = auraName.toLowerCase().trim();
-    if (CHALLENGED_PLUS_AURAS.includes(lower)) return '🔥 CHALLENGED+';
-    if (CHALLENGED_AURAS.includes(lower))       return '⚡ CHALLENGED';
-    if (chance >= 1_000_000_000)                return '🌌 TRANSCENDENT';
-    if (chance >= 99_999_999)                   return '✨ GLORIOUS';
-    return '';
-}
-
 // ── Payload parser ─────────────────────────────────────────────────────────────
-// The executeWebhook payload contains Discord embeds.
-// The embed description looks like:
-//   "Zune(@Hoangvn150) HAS FOUND Impeached, CHANCE OF 1 IN 200,000,000"
 
 function parseWebhookPayload(data) {
     if (!data.embeds || data.embeds.length === 0) return null;
@@ -121,10 +97,10 @@ function parseWebhookPayload(data) {
 
 async function handleFind(data) {
     const parsed = parseWebhookPayload(data);
-    if (!parsed) return; // Not an aura-find message (e.g. enabled/disabled status)
+    if (!parsed) return;
 
-    const { robloxUsername, auraName, chance, chanceStr } = parsed;
-    console.log(`🎯  ${robloxUsername} found ${auraName} (${chanceStr})`);
+    const { robloxUsername, auraName, chance } = parsed;
+    console.log(`🎯  ${robloxUsername} found ${auraName}`);
 
     // Skip if below global threshold
     const roleId = getRoleToPing(auraName, chance);
@@ -133,7 +109,7 @@ async function handleFind(data) {
         return;
     }
 
-    // Skip if the user is not linked
+    // Skip if user is not linked
     const links = loadLinks();
     const discordUserId = links[robloxUsername.toLowerCase()];
     if (!discordUserId) {
@@ -141,31 +117,40 @@ async function handleFind(data) {
         return;
     }
 
-    const roleMention = `<@&${roleId}>`;
-    const userMention = `<@${discordUserId}>`;
-    const tierLabel   = getTierLabel(auraName, chance);
+    // Rebuild the exact same embed Sol's Stat Tracker sends
+    const src = data.embeds[0];
+    const embed = new EmbedBuilder();
 
-    const pingMessage = [
-        `${roleMention} ${userMention}`,
-        `> ${tierLabel}`,
-        `> **${robloxUsername}** found **${auraName}**`,
-        `> Chance: **${chanceStr}**`,
-    ].join('\n');
+    if (src.description)            embed.setDescription(src.description);
+    if (src.color)                  embed.setColor(src.color);
+    if (src.title)                  embed.setTitle(src.title);
+    if (src.url)                    embed.setURL(src.url);
+    if (src.author)                 embed.setAuthor({ name: src.author.name, iconURL: src.author.icon_url, url: src.author.url });
+    if (src.thumbnail?.url)         embed.setThumbnail(src.thumbnail.url);
+    if (src.image?.url)             embed.setImage(src.image.url);
+    if (src.footer)                 embed.setFooter({ text: src.footer.text, iconURL: src.footer.icon_url });
+    if (src.timestamp)              embed.setTimestamp(new Date(src.timestamp));
+    if (src.fields?.length > 0)     embed.addFields(src.fields);
 
     try {
         const outputChannel = await discordClient.channels.fetch(outputChannelId);
-        await outputChannel.send(pingMessage);
+
+        await outputChannel.send({
+            content: `<@&${roleId}> <@${discordUserId}>`,
+            embeds: [embed],
+        });
+
         console.log(`📨  Sent ping — ${robloxUsername} | ${auraName}`);
     } catch (err) {
         console.error(`❌  Failed to send ping: ${err.message}`);
     }
 }
 
-// ── Slash commands (/link, /unlink, /links) ────────────────────────────────────
+// ── Slash commands ─────────────────────────────────────────────────────────────
 
 discordClient.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
-    if (interaction.guildId !== privateGuildId) return; // Only in your private server
+    if (interaction.guildId !== privateGuildId) return;
 
     const { commandName } = interaction;
 
@@ -202,7 +187,7 @@ discordClient.on(Events.InteractionCreate, async (interaction) => {
     }
 });
 
-// ── WebSocket (official Sol's Stat Tracker gateway) ───────────────────────────
+// ── WebSocket ──────────────────────────────────────────────────────────────────
 
 let reconnectInterval = 31_000;
 
@@ -212,18 +197,8 @@ const connect = () => {
     });
 
     ws.on('open', () => {
-        console.log(`ID: ${webhookClient.id} | WS client connected: ${gatewayURL}`);
+        console.log(`ID: ${discordClient.user?.id ?? 'pending'} | WS client connected: ${gatewayURL}`);
         reconnectInterval = 31_000;
-
-        setTimeout(() => {
-            if (ws.readyState === ws.OPEN) {
-                const connectedEmbed = new EmbedBuilder()
-                    .setDescription(`${emojis.success} **Sol's Stat Tracker** - Connected`)
-                    .setColor(colors.success);
-
-                if (verboseLogging) webhookClient.send({ embeds: [connectedEmbed] });
-            }
-        }, 1_000);
     });
 
     ws.on('message', (rawData) => {
@@ -231,72 +206,52 @@ const connect = () => {
             rawData = JSON.parse(rawData.toString('utf8'));
 
             switch (rawData.action) {
-                case 'enabled': {
-                    const enabledEmbed = new EmbedBuilder()
-                        .setDescription(`${emojis.success} **Sol's Stat Tracker** - Enabled`)
-                        .setColor(colors.success);
-                    webhookClient.send({ embeds: [enabledEmbed] });
+                case 'enabled':
+                    console.log('Sol\'s Stat Tracker — Enabled');
                     break;
-                }
-                case 'disabled': {
-                    const disabledEmbed = new EmbedBuilder()
-                        .setDescription(`${emojis.error} **Sol's Stat Tracker** - Disabled`)
-                        .setColor(colors.error);
-                    webhookClient.send({ embeds: [disabledEmbed] });
+                case 'disabled':
+                    console.log('Sol\'s Stat Tracker — Disabled');
                     break;
-                }
                 case 'executeWebhook': {
-                    rawData.data.username        = overrideUsername  ?? rawData.data.username;
-                    rawData.data.avatarURL        = overrideAvatarURL ?? rawData.data.avatarURL;
-                    rawData.data.allowedMentions  = { parse: [] };
-
-                    // 1. Forward to your webhook channel as normal
-                    webhookClient.send(rawData.data);
-
-                    // 2. Check if we should ping anyone in your private server
+                    // Only check if a linked friend got the aura — no webhook forwarding
                     handleFind(rawData.data);
                     break;
                 }
                 default:
-                    console.error(`ID: ${webhookClient.id} | WS client invalid action: ${rawData.action}`);
+                    console.error(`WS client invalid action: ${rawData.action}`);
                     break;
             }
         } catch (error) {
-            console.error(`ID: ${webhookClient.id} | WS client message error: ${error.message}`);
+            console.error(`WS client message error: ${error.message}`);
         }
     });
 
     ws.on('close', async (code, reason) => {
         reason = reason.toString('utf8');
-        console.warn(`ID: ${webhookClient.id} | WS client disconnected: Code ${code}${reason ? ` - ${reason}` : ''}`);
+        console.warn(`WS client disconnected: Code ${code}${reason ? ` - ${reason}` : ''}`);
 
         switch (code) {
             case 4001:
-                console.error('The API token is missing.');
-                if (verboseLogging) await webhookClient.send({ embeds: [new EmbedBuilder().setDescription(`${emojis.error} **Sol's Stat Tracker** - The API token is missing.`).setColor(colors.error)] });
+                console.error('The API token is missing. Bot stopping.');
                 return;
             case 4002:
-                console.error('The API token is invalid.');
-                if (verboseLogging) await webhookClient.send({ embeds: [new EmbedBuilder().setDescription(`${emojis.error} **Sol's Stat Tracker** - The API token is invalid.`).setColor(colors.error)] });
+                console.error('The API token is invalid. Bot stopping.');
                 return;
             case 4004:
-                console.error('The API token has been deleted.');
-                if (verboseLogging) await webhookClient.send({ embeds: [new EmbedBuilder().setDescription(`${emojis.error} **Sol's Stat Tracker** - The API token has been deleted.`).setColor(colors.error)] });
+                console.error('The API token has been deleted. Bot stopping.');
                 return;
             case 4003:
                 console.error('The API token is already in-use.');
-                if (verboseLogging) await webhookClient.send({ embeds: [new EmbedBuilder().setDescription(`${emojis.error} **Sol's Stat Tracker** - The API token is already in-use.`).setColor(colors.error)] });
                 if (!reconnectOnDuplicateConnection) return;
             default:
-                console.warn(`ID: ${webhookClient.id} | Reconnecting WS client in ${reconnectInterval}ms...`);
-                if (verboseLogging) await webhookClient.send({ embeds: [new EmbedBuilder().setDescription(`${emojis.none} **Sol's Stat Tracker** - Reconnecting`).setColor(colors.none)] });
+                console.warn(`Reconnecting in ${reconnectInterval}ms...`);
                 setTimeout(connect, reconnectInterval);
                 reconnectInterval = Math.min(maxReconnectInterval, reconnectInterval * 2);
         }
     });
 
     ws.on('error', async (error) => {
-        console.error(`ID: ${webhookClient.id} | WS client error: ${error.message}`);
+        console.error(`WS client error: ${error.message}`);
         ws.terminate();
     });
 };
