@@ -115,75 +115,89 @@ function getRoleToPing(auraName, chance) {
 }
 
 // ── Payload parser ─────────────────────────────────────────────────────────────
+// The content is a plain text string with markdown, multiple finds separated by \n
+// Format per find:
+//   **DisplayName(@RobloxUsername)** HAS FOUND **AuraName**, CHANCE OF **1 IN 540,000,000**
+//
+// We extract ALL finds from the content and return an array.
 
-function parseWebhookPayload(data) {
-    if (!data.embeds || data.embeds.length === 0) return null;
+function parseAllFinds(data) {
+    const content = data.content || '';
+    if (!content) return [];
 
-    const embed = data.embeds[0];
-    const text  = embed.description || '';
-    if (!text) return null;
+    const finds = [];
 
-    const pattern = /.+?\(@([^)]+)\)\s+HAS FOUND\s+(.+?),\s+CHANCE OF\s+(1\s+IN\s+[\d,]+)/i;
-    const match = text.match(pattern);
-    if (!match) return null;
+    // Match each individual find in the content string
+    // Pattern: **anything(@RobloxUsername)** HAS FOUND **AuraName**, CHANCE OF **1 IN number**
+    const pattern = /\*\*.+?\(@([^)]+)\)\*\*\s+HAS FOUND\s+\*\*(.+?)\*\*,\s+CHANCE OF\s+\*\*(1\s+IN\s+[\d,]+)\*\*/gi;
 
-    const robloxUsername = match[1].trim();
-    const auraName       = match[2].trim();
-    const chanceStr      = match[3].trim();
-    const chance         = parseChance(chanceStr);
+    let match;
+    while ((match = pattern.exec(content)) !== null) {
+        const robloxUsername = match[1].trim();
+        const auraName       = match[2].trim();
+        const chanceStr      = match[3].trim();
+        const chance         = parseChance(chanceStr);
 
-    if (!chance) return null;
-    return { robloxUsername, auraName, chance, chanceStr };
+        if (chance) {
+            finds.push({ robloxUsername, auraName, chance, chanceStr });
+        }
+    }
+
+    return finds;
 }
 
 // ── Ping handler ───────────────────────────────────────────────────────────────
 
 async function handleFind(data) {
-    const parsed = parseWebhookPayload(data);
-    if (!parsed) {
-        console.log(`⚠️  Received executeWebhook but could not parse — raw description: ${data.embeds?.[0]?.description}`);
+    const finds = parseAllFinds(data);
+
+    if (finds.length === 0) {
+        console.log(`⚠️  Could not parse any finds from content`);
         return;
     }
 
-    const { robloxUsername, auraName, chance } = parsed;
-    console.log(`🎯  ${robloxUsername} found ${auraName}`);
-
-    const roleId = getRoleToPing(auraName, chance);
-    if (!roleId) {
-        console.log(`⏭️  Skipping — below global threshold`);
-        return;
-    }
+    console.log(`📋  Parsed ${finds.length} find(s) from payload`);
 
     const links = loadLinks();
-    const discordUserId = links[robloxUsername.toLowerCase()];
-    if (!discordUserId) {
-        console.log(`⏭️  Skipping — ${robloxUsername} is not linked`);
-        return;
-    }
 
-    const src = data.embeds[0];
-    const embed = new EmbedBuilder();
+    for (const { robloxUsername, auraName, chance, chanceStr } of finds) {
+        console.log(`🎯  ${robloxUsername} found ${auraName} (${chanceStr})`);
 
-    if (src.description)        embed.setDescription(src.description);
-    if (src.color)              embed.setColor(src.color);
-    if (src.title)              embed.setTitle(src.title);
-    if (src.url)                embed.setURL(src.url);
-    if (src.author)             embed.setAuthor({ name: src.author.name, iconURL: src.author.icon_url, url: src.author.url });
-    if (src.thumbnail?.url)     embed.setThumbnail(src.thumbnail.url);
-    if (src.image?.url)         embed.setImage(src.image.url);
-    if (src.footer)             embed.setFooter({ text: src.footer.text, iconURL: src.footer.icon_url });
-    if (src.timestamp)          embed.setTimestamp(new Date(src.timestamp));
-    if (src.fields?.length > 0) embed.addFields(src.fields);
+        // Skip if below global threshold
+        const roleId = getRoleToPing(auraName, chance);
+        if (!roleId) {
+            console.log(`⏭️  Skipping ${robloxUsername} — below global threshold`);
+            continue;
+        }
 
-    try {
-        const outputChannel = await discordClient.channels.fetch(outputChannelId);
-        await outputChannel.send({
-            content: `<@&${roleId}> <@${discordUserId}>`,
-            embeds: [embed],
-        });
-        console.log(`📨  Sent ping — ${robloxUsername} | ${auraName}`);
-    } catch (err) {
-        console.error(`❌  Failed to send ping: ${err.message}`);
+        // Skip if user is not linked
+        const discordUserId = links[robloxUsername.toLowerCase()];
+        if (!discordUserId) {
+            console.log(`⏭️  Skipping ${robloxUsername} — not linked`);
+            continue;
+        }
+
+        // Build a clean embed matching Sol's Stat Tracker style
+        const embed = new EmbedBuilder()
+            .setColor(0x5865F2)
+            .setAuthor({
+                name: data.username || "Sol's Stat Tracker",
+                iconURL: data.avatarURL || undefined,
+            })
+            .setDescription(
+                `**${robloxUsername}** HAS FOUND **${auraName}**, CHANCE OF **${chanceStr}**`
+            );
+
+        try {
+            const outputChannel = await discordClient.channels.fetch(outputChannelId);
+            await outputChannel.send({
+                content: `<@&${roleId}> <@${discordUserId}>`,
+                embeds: [embed],
+            });
+            console.log(`📨  Sent ping — ${robloxUsername} | ${auraName}`);
+        } catch (err) {
+            console.error(`❌  Failed to send ping: ${err.message}`);
+        }
     }
 }
 
@@ -262,9 +276,7 @@ const connect = () => {
     ws.on('message', (rawData) => {
         try {
             const parsed = JSON.parse(rawData.toString('utf8'));
-
-            // DEBUG — log every single message received from the WebSocket
-            console.log(`📩  WS message received — action: ${parsed.action}`);
+            console.log(`📩  WS message — action: ${parsed.action}`);
 
             switch (parsed.action) {
                 case 'enabled':
@@ -274,7 +286,6 @@ const connect = () => {
                     console.log("Sol's Stat Tracker — Disabled");
                     break;
                 case 'executeWebhook':
-                    console.log(`📦  Full payload: ${JSON.stringify(parsed.data)}`);
                     handleFind(parsed.data);
                     break;
                 default:
