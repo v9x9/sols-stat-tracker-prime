@@ -88,7 +88,7 @@ const CHALLENGED_AURAS = [
     'leviathan',
     'memory',
     'neferkhaf',
-    'fragments of the crimson moon',
+    'Fragment of Chaos',
 ];
 
 const CHALLENGED_PLUS_AURAS = [
