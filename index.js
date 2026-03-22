@@ -274,7 +274,7 @@ const connect = () => {
                     console.log("Sol's Stat Tracker — Disabled");
                     break;
                 case 'executeWebhook':
-                    console.log(`📦  executeWebhook payload — description: ${parsed.data?.embeds?.[0]?.description}`);
+                    console.log(`📦  Full payload: ${JSON.stringify(parsed.data)}`);
                     handleFind(parsed.data);
                     break;
                 default:
