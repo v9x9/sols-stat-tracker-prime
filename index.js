@@ -18,17 +18,7 @@ const discordClient = new Client({
     intents: [GatewayIntentBits.Guilds],
 });
 
-discordClient.login(botToken);
-
-discordClient.once(Events.ClientReady, () => {
-    console.log(`✅  Discord bot logged in as ${discordClient.user.tag}`);
-    const links = loadLinks();
-    console.log(`👥  Linked users: ${Object.keys(links).join(', ') || 'none'}`);
-});
-
-// ── Links store (Railway environment variable) ────────────────────────────────
-// Links are stored as a JSON string in the LINKS environment variable.
-// e.g. LINKS = {"bobloqgc":"123456789","rogue":"987654321"}
+// ── Links store (Railway environment variable) ─────────────────────────────────
 
 function loadLinks() {
     try {
@@ -41,7 +31,6 @@ function loadLinks() {
 }
 
 async function saveLinks(links) {
-    // Update the LINKS env var in Railway via their API
     return new Promise((resolve, reject) => {
         const value = JSON.stringify(links);
         const body = JSON.stringify({
@@ -76,7 +65,6 @@ async function saveLinks(links) {
                         console.error('Railway API error:', parsed.errors);
                         reject(parsed.errors);
                     } else {
-                        // Update local env var so current process sees the change immediately
                         process.env.LINKS = value;
                         resolve();
                     }
@@ -127,9 +115,6 @@ function getRoleToPing(auraName, chance) {
 }
 
 // ── Payload parser ─────────────────────────────────────────────────────────────
-// Embed description format:
-//   "agony(@Bobloqgc) HAS FOUND Sailor : Admiral, CHANCE OF 1 IN 540,000,000"
-//          ^^^^^^^^^^ real Roblox username (inside the brackets)
 
 function parseWebhookPayload(data) {
     if (!data.embeds || data.embeds.length === 0) return null;
@@ -211,7 +196,7 @@ discordClient.on(Events.InteractionCreate, async (interaction) => {
         const robloxUsername = interaction.options.getString('roblox_username').toLowerCase();
         const discordUser    = interaction.options.getUser('discord_user');
 
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: 64 });
 
         const links = loadLinks();
         links[robloxUsername] = discordUser.id;
@@ -227,7 +212,7 @@ discordClient.on(Events.InteractionCreate, async (interaction) => {
     else if (commandName === 'unlink') {
         const robloxUsername = interaction.options.getString('roblox_username').toLowerCase();
 
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: 64 });
 
         const links = loadLinks();
         if (!links[robloxUsername]) {
@@ -249,11 +234,11 @@ discordClient.on(Events.InteractionCreate, async (interaction) => {
         const links = loadLinks();
         const entries = Object.entries(links);
         if (entries.length === 0) {
-            await interaction.reply({ content: 'No linked users yet.', ephemeral: true });
+            await interaction.reply({ content: 'No linked users yet.', flags: 64 });
             return;
         }
         const list = entries.map(([r, d]) => `• **${r}** → <@${d}>`).join('\n');
-        await interaction.reply({ content: `**Linked users:**\n${list}`, ephemeral: true });
+        await interaction.reply({ content: `**Linked users:**\n${list}`, flags: 64 });
     }
 });
 
@@ -300,8 +285,10 @@ const connect = () => {
             case 4002: console.error('API token invalid. Stopping.'); return;
             case 4004: console.error('API token deleted. Stopping.'); return;
             case 4003:
-                console.error('API token already in-use.');
-                if (!reconnectOnDuplicateConnection) return;
+                console.error('API token already in-use. Waiting 35s then retrying...');
+                // Wait and retry — the old connection will have timed out by then
+                setTimeout(connect, 35_000);
+                return;
             default:
                 console.warn(`Reconnecting in ${reconnectInterval}ms...`);
                 setTimeout(connect, reconnectInterval);
@@ -315,4 +302,15 @@ const connect = () => {
     });
 };
 
-connect();
+// ── Start — wait for Discord to be ready before connecting WebSocket ──────────
+
+discordClient.once(Events.ClientReady, () => {
+    console.log(`✅  Discord bot logged in as ${discordClient.user.tag}`);
+    const links = loadLinks();
+    console.log(`👥  Linked users: ${Object.keys(links).join(', ') || 'none'}`);
+
+    // Start WebSocket only after Discord is fully ready
+    connect();
+});
+
+discordClient.login(botToken);
