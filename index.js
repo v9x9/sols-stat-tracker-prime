@@ -18,7 +18,7 @@ const discordClient = new Client({
     intents: [GatewayIntentBits.Guilds],
 });
 
-// ── Links store (Railway environment variable) ─────────────────────────────────
+// ── Links store ────────────────────────────────────────────────────────────────
 
 function loadLinks() {
     try {
@@ -88,7 +88,7 @@ const CHALLENGED_AURAS = [
     'leviathan',
     'memory',
     'neferkhaf',
-    'Fragment of Chaos',
+    'fragments of the crimson moon',
 ];
 
 const CHALLENGED_PLUS_AURAS = [
@@ -140,7 +140,10 @@ function parseWebhookPayload(data) {
 
 async function handleFind(data) {
     const parsed = parseWebhookPayload(data);
-    if (!parsed) return;
+    if (!parsed) {
+        console.log(`⚠️  Received executeWebhook but could not parse — raw description: ${data.embeds?.[0]?.description}`);
+        return;
+    }
 
     const { robloxUsername, auraName, chance } = parsed;
     console.log(`🎯  ${robloxUsername} found ${auraName}`);
@@ -258,8 +261,12 @@ const connect = () => {
 
     ws.on('message', (rawData) => {
         try {
-            rawData = JSON.parse(rawData.toString('utf8'));
-            switch (rawData.action) {
+            const parsed = JSON.parse(rawData.toString('utf8'));
+
+            // DEBUG — log every single message received from the WebSocket
+            console.log(`📩  WS message received — action: ${parsed.action}`);
+
+            switch (parsed.action) {
                 case 'enabled':
                     console.log("Sol's Stat Tracker — Enabled");
                     break;
@@ -267,10 +274,11 @@ const connect = () => {
                     console.log("Sol's Stat Tracker — Disabled");
                     break;
                 case 'executeWebhook':
-                    handleFind(rawData.data);
+                    console.log(`📦  executeWebhook payload — description: ${parsed.data?.embeds?.[0]?.description}`);
+                    handleFind(parsed.data);
                     break;
                 default:
-                    console.error(`WS invalid action: ${rawData.action}`);
+                    console.error(`WS invalid action: ${parsed.action}`);
             }
         } catch (error) {
             console.error(`WS message error: ${error.message}`);
@@ -286,7 +294,6 @@ const connect = () => {
             case 4004: console.error('API token deleted. Stopping.'); return;
             case 4003:
                 console.error('API token already in-use. Waiting 35s then retrying...');
-                // Wait and retry — the old connection will have timed out by then
                 setTimeout(connect, 35_000);
                 return;
             default:
@@ -302,14 +309,12 @@ const connect = () => {
     });
 };
 
-// ── Start — wait for Discord to be ready before connecting WebSocket ──────────
+// ── Start ──────────────────────────────────────────────────────────────────────
 
 discordClient.once(Events.ClientReady, () => {
     console.log(`✅  Discord bot logged in as ${discordClient.user.tag}`);
     const links = loadLinks();
     console.log(`👥  Linked users: ${Object.keys(links).join(', ') || 'none'}`);
-
-    // Start WebSocket only after Discord is fully ready
     connect();
 });
 
