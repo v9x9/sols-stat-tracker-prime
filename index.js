@@ -115,11 +115,9 @@ function getRoleToPing(auraName, chance) {
 }
 
 // ── Payload parser ─────────────────────────────────────────────────────────────
-// The content is a plain text string with markdown, multiple finds separated by \n
-// Format per find:
-//   **DisplayName(@RobloxUsername)** HAS FOUND **AuraName**, CHANCE OF **1 IN 540,000,000**
-//
-// We extract ALL finds from the content and return an array.
+// Each line in content looks like:
+//   <:Global:123> **DisplayName(@RobloxUsername)** HAS FOUND **AuraName**, CHANCE OF **1 IN 540,000,000**
+// Some lines don't have (@Username) — those are skipped since we can't identify the player
 
 function parseAllFinds(data) {
     const content = data.content || '';
@@ -127,9 +125,9 @@ function parseAllFinds(data) {
 
     const finds = [];
 
-    // Match each individual find in the content string
-    // Pattern: **anything(@RobloxUsername)** HAS FOUND **AuraName**, CHANCE OF **1 IN number**
-    const pattern = /\*\*.+?\(@([^)]+)\)\*\*\s+HAS FOUND\s+\*\*(.+?)\*\*,\s+CHANCE OF\s+\*\*(1\s+IN\s+[\d,]+)\*\*/gi;
+    // Match lines that have (@RobloxUsername) — skip lines without it
+    // Accounts for the <:emoji:id> prefix at the start of each line
+    const pattern = /\*\*.+?\(@([^)]+)\)\*\*\s+HAS FOUND\s+\*\*(.+?)\*\*,\s+CHANCE OF\s+\*\*(1\s+IN\s+[\d,]+)\*\*/g;
 
     let match;
     while ((match = pattern.exec(content)) !== null) {
@@ -152,32 +150,29 @@ async function handleFind(data) {
     const finds = parseAllFinds(data);
 
     if (finds.length === 0) {
-        console.log(`⚠️  Could not parse any finds from content`);
+        console.log(`⚠️  No parseable finds in payload`);
         return;
     }
 
-    console.log(`📋  Parsed ${finds.length} find(s) from payload`);
+    console.log(`📋  Parsed ${finds.length} find(s)`);
 
     const links = loadLinks();
 
     for (const { robloxUsername, auraName, chance, chanceStr } of finds) {
         console.log(`🎯  ${robloxUsername} found ${auraName} (${chanceStr})`);
 
-        // Skip if below global threshold
         const roleId = getRoleToPing(auraName, chance);
         if (!roleId) {
-            console.log(`⏭️  Skipping ${robloxUsername} — below global threshold`);
+            console.log(`⏭️  Skipping ${robloxUsername} — below threshold`);
             continue;
         }
 
-        // Skip if user is not linked
         const discordUserId = links[robloxUsername.toLowerCase()];
         if (!discordUserId) {
             console.log(`⏭️  Skipping ${robloxUsername} — not linked`);
             continue;
         }
 
-        // Build a clean embed matching Sol's Stat Tracker style
         const embed = new EmbedBuilder()
             .setColor(0x5865F2)
             .setAuthor({
